@@ -16,7 +16,13 @@ pipeline {
 
   stages {
     stage('Checkout') {
-      steps { checkout scm }
+      steps {
+        checkout scm
+        script {
+          env.BUILD_COMMIT = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+          echo "Building commit ${env.BUILD_COMMIT}"
+        }
+      }
     }
 
     stage('Frontend checks') {
@@ -37,8 +43,8 @@ pipeline {
 
     stage('Build container images') {
       steps {
-        sh 'docker build -t loopcycle-backend:${GIT_COMMIT} backend'
-        sh 'docker build --build-arg VITE_API_BASE_URL=/api -t loopcycle-frontend:${GIT_COMMIT} frontend'
+        sh 'docker build -t loopcycle-backend:${BUILD_COMMIT} backend'
+        sh 'docker build --build-arg VITE_API_BASE_URL=/api -t loopcycle-frontend:${BUILD_COMMIT} frontend'
       }
     }
 
@@ -57,15 +63,15 @@ pipeline {
           env.FRONTEND_REMOTE_IMAGE = "${registry}/${namespace}/loopcycle-frontend"
           env.REGISTRY_HOST_NORMALIZED = registry
           env.IMAGE_NAMESPACE_NORMALIZED = namespace
-          sh 'docker tag loopcycle-backend:${GIT_COMMIT} ${BACKEND_REMOTE_IMAGE}:${GIT_COMMIT}'
-          sh 'docker tag loopcycle-frontend:${GIT_COMMIT} ${FRONTEND_REMOTE_IMAGE}:${GIT_COMMIT}'
+          sh 'docker tag loopcycle-backend:${BUILD_COMMIT} ${BACKEND_REMOTE_IMAGE}:${BUILD_COMMIT}'
+          sh 'docker tag loopcycle-frontend:${BUILD_COMMIT} ${FRONTEND_REMOTE_IMAGE}:${BUILD_COMMIT}'
           withCredentials([usernamePassword(credentialsId: 'loopcycle-registry', usernameVariable: 'REGISTRY_USERNAME', passwordVariable: 'REGISTRY_PASSWORD')]) {
             sh '''
               set +x
               trap 'docker logout "$REGISTRY_HOST" >/dev/null 2>&1 || true' EXIT
               printf '%s' "$REGISTRY_PASSWORD" | docker login "$REGISTRY_HOST" --username "$REGISTRY_USERNAME" --password-stdin
-              docker push "$BACKEND_REMOTE_IMAGE:$GIT_COMMIT"
-              docker push "$FRONTEND_REMOTE_IMAGE:$GIT_COMMIT"
+              docker push "$BACKEND_REMOTE_IMAGE:$BUILD_COMMIT"
+              docker push "$FRONTEND_REMOTE_IMAGE:$BUILD_COMMIT"
             '''
           }
         }
@@ -80,7 +86,7 @@ pipeline {
         script {
           if (!params.PUBLISH_IMAGES) error('DEPLOY_ENABLED requires PUBLISH_IMAGES.')
           timeout(time: 15, unit: 'MINUTES') {
-            input message: "Deploy ${env.GIT_COMMIT} to the configured LoopCycle hosts?", ok: 'Deploy'
+            input message: "Deploy ${env.BUILD_COMMIT} to the configured LoopCycle hosts?", ok: 'Deploy'
           }
         }
       }
@@ -107,7 +113,7 @@ pipeline {
                 ansible-playbook -i "$ANSIBLE_INVENTORY" ansible/playbooks/docker.yml --syntax-check
                 ansible-playbook -i "$ANSIBLE_INVENTORY" ansible/playbooks/webserver.yml --syntax-check
                 ansible-playbook -i "$ANSIBLE_INVENTORY" ansible/playbooks/docker.yml \
-                  -e "image_registry=$REGISTRY_HOST_NORMALIZED image_namespace=$IMAGE_NAMESPACE_NORMALIZED image_tag=$GIT_COMMIT"
+                  -e "image_registry=$REGISTRY_HOST_NORMALIZED image_namespace=$IMAGE_NAMESPACE_NORMALIZED image_tag=$BUILD_COMMIT"
                 ansible-playbook -i "$ANSIBLE_INVENTORY" ansible/playbooks/webserver.yml
               '''
             }
