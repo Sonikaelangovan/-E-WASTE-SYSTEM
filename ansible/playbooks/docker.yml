@@ -1,0 +1,33 @@
+---
+- name: Deploy LoopCycle Docker Compose stack
+  hosts: web
+  become: true
+  vars:
+    app_dir: /opt/loopcycle
+  tasks:
+    - name: Install Docker engine and Compose plugin
+      ansible.builtin.package:
+        name: [docker.io, docker-compose-plugin]
+        state: present
+    - name: Enable Docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+    - name: Create deployment directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        mode: '0750'
+    - name: Copy Compose and environment files
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../{{ item }}"
+        dest: "{{ app_dir }}/{{ item }}"
+        mode: '0640'
+      loop: [compose.yaml, .env]
+    - name: Start application services
+      ansible.builtin.command: docker compose up -d --build
+      args:
+        chdir: "{{ app_dir }}"
+      register: compose_result
+      changed_when: "'Started' in compose_result.stdout or 'Created' in compose_result.stdout"

@@ -1,0 +1,35 @@
+---
+- name: Configure Nginx reverse proxy for LoopCycle
+  hosts: web
+  become: true
+  vars:
+    backend_port: 8080
+    frontend_port: 3000
+  tasks:
+    - name: Install Nginx
+      ansible.builtin.package:
+        name: nginx
+        state: present
+    - name: Configure application proxy
+      ansible.builtin.copy:
+        dest: /etc/nginx/conf.d/loopcycle.conf
+        mode: '0644'
+        content: |
+          server {
+            listen 80;
+            server_name _;
+            location /api/ { proxy_pass http://127.0.0.1:{{ backend_port }}/api/; }
+            location /actuator/health { proxy_pass http://127.0.0.1:{{ backend_port }}/actuator/health; }
+            location / { proxy_pass http://127.0.0.1:{{ frontend_port }}; }
+          }
+      notify: Reload Nginx
+    - name: Enable Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+  handlers:
+    - name: Reload Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
