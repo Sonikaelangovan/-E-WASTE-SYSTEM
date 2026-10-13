@@ -1,33 +1,170 @@
 ---
-- name: Deploy LoopCycle Docker Compose stack
+- name: Deploy LoopCycle Compose stack
   hosts: web
   become: true
   vars:
     app_dir: /opt/loopcycle
+    image_registry: docker.io
   tasks:
-    - name: Install Docker engine and Compose plugin
-      ansible.builtin.package:
-        name: [docker.io, docker-compose-plugin]
+    - name: Require a supported Debian-family target
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution in ['Debian', 'Ubuntu']
+        fail_msg: This playbook installs Docker from the official apt repository and supports Debian or Ubuntu.
+
+    - name: Install Docker apt repository prerequisites
+      ansible.builtin.apt:
+        name: [ca-certificates, curl]
         state: present
+        update_cache: true
+
+    - name: Create apt keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Install Docker repository signing key
+      ansible.builtin.get_url:
+        url: "https://download.docker.com/linux/{{ 'ubuntu' if ansible_distribution == 'Ubuntu' else 'debian' }}/gpg"
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
+
+    - name: Read target package architecture
+      ansible.builtin.command: dpkg --print-architecture
+      register: docker_arch
+      changed_when: false
+
+    - name: Configure official Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch={{ docker_arch.stdout }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/{{ 'ubuntu' if ansible_distribution == 'Ubuntu' else 'debian' }} {{ ansible_distribution_release }} stable"
+        filename: docker
+        state: present
+
+    - name: Install Docker Engine and Compose v2
+      ansible.builtin.apt:
+        name: [docker-ce, docker-ce-cli, containerd.io, docker-buildx-plugin, docker-compose-plugin]
+        state: present
+        update_cache: true
+
     - name: Enable Docker
       ansible.builtin.service:
         name: docker
         state: started
         enabled: true
+
     - name: Create deployment directory
       ansible.builtin.file:
         path: "{{ app_dir }}"
         state: directory
+        owner: root
+        group: root
         mode: '0750'
-    - name: Copy Compose and environment files
+
+    - name: Copy Compose configuration
       ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../../{{ item }}"
-        dest: "{{ app_dir }}/{{ item }}"
-        mode: '0640'
-      loop: [compose.yaml, .env]
-    - name: Start application services
-      ansible.builtin.command: docker compose up -d --build
+        src: "{{ playbook_dir }}/../../compose.yaml"
+        dest: "{{ app_dir }}/compose.yaml"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Install protected deployment environment file
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../.env"
+        dest: "{{ app_dir }}/.env"
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+
+    - name: Pin backend image to this deployment revision
+      ansible.builtin.lineinfile:
+        path: "{{ app_dir }}/.env"
+        regexp: '^BACKEND_IMAGE='
+        line: "BACKEND_IMAGE={{ image_registry }}/{{ image_namespace }}/loopcycle-backend:{{ image_tag }}"
+        create: false
+        mode: '0600'
+
+    - name: Pin frontend image to this deployment revision
+      ansible.builtin.lineinfile:
+        path: "{{ app_dir }}/.env"
+        regexp: '^FRONTEND_IMAGE='
+        line: "FRONTEND_IMAGE={{ image_registry }}/{{ image_namespace }}/loopcycle-frontend:{{ image_tag }}"
+        create: false
+        mode: '0600'
+
+    - name: Validate Compose configuration without printing secrets
+      ansible.builtin.command: docker compose config --quiet
       args:
         chdir: "{{ app_dir }}"
-      register: compose_result
-      changed_when: "'Started' in compose_result.stdout or 'Created' in compose_result.stdout"
+      changed_when: false
+
+    - name: Pull, start, and verify the application
+      block:
+        - name: Sign in to the image registry on the host
+          ansible.builtin.command:
+            argv:
+              - docker
+              - login
+              - "{{ image_registry }}"
+              - --username
+              - "{{ lookup('ansible.builtin.env', 'REGISTRY_USERNAME') }}"
+              - --password-stdin
+            stdin: "{{ lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') }}"
+          when: lookup('ansible.builtin.env', 'REGISTRY_USERNAME') | length > 0
+          no_log: true
+
+        - name: Pull the immutable image tags
+          ansible.builtin.command: docker compose pull
+          args:
+            chdir: "{{ app_dir }}"
+          changed_when: false
+
+        - name: Start the stack and remove obsolete services
+          ansible.builtin.command: docker compose up -d --remove-orphans
+          args:
+            chdir: "{{ app_dir }}"
+          register: compose_up
+          changed_when: compose_up.stdout is search('Created|Started|Recreated|Updated')
+
+        - name: Wait for the API health endpoint
+          ansible.builtin.uri:
+            url: http://127.0.0.1:{{ backend_port | default(8080) }}/actuator/health
+            status_code: 200
+            return_content: true
+          register: api_health
+          retries: 30
+          delay: 10
+          until: api_health.status == 200 and api_health.json.status == 'UP'
+
+        - name: Wait for the frontend
+          ansible.builtin.uri:
+            url: http://127.0.0.1:{{ frontend_port | default(3000) }}/
+            status_code: 200
+          register: frontend_health
+          retries: 12
+          delay: 5
+          until: frontend_health.status == 200
+
+        - name: Show deployed service state
+          ansible.builtin.command: docker compose ps
+          args:
+            chdir: "{{ app_dir }}"
+          changed_when: false
+          register: compose_ps
+
+        - name: Print service state
+          ansible.builtin.debug:
+            var: compose_ps.stdout_lines
+
+      always:
+        - name: Sign out of the image registry on the host
+          ansible.builtin.command:
+            argv:
+              - docker
+              - logout
+              - "{{ image_registry }}"
+          when: lookup('ansible.builtin.env', 'REGISTRY_USERNAME') | length > 0
+          changed_when: false
+          no_log: true

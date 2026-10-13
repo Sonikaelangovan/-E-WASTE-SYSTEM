@@ -3,6 +3,7 @@ frontend/node_modules/
 frontend/dist/
 backend/target/
 .env
+ansible/inventory.ini
 *.log
 .idea/
 .vscode/

@@ -13,11 +13,15 @@ services:
       timeout: 5s
       retries: 12
   backend:
+    image: ${BACKEND_IMAGE:-loopcycle-backend:local}
     build: ./backend
     environment:
       DB_URL: jdbc:mysql://db:3306/${MYSQL_DATABASE:-ewaste}
       DB_USERNAME: ${MYSQL_USER:-ewaste_app}
       DB_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+      APP_JWT_SECRET: ${APP_JWT_SECRET:?Set APP_JWT_SECRET in .env}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     ports: ["127.0.0.1:${BACKEND_PORT:-8080}:8080"]
     depends_on:
       db: {condition: service_healthy}
@@ -27,11 +31,12 @@ services:
       timeout: 5s
       retries: 10
   frontend:
+    image: ${FRONTEND_IMAGE:-loopcycle-frontend:local}
     build:
       context: ./frontend
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080/api}
-    ports: ["127.0.0.1:3000:80"]
+    ports: ["127.0.0.1:${FRONTEND_PORT:-3000}:80"]
     depends_on: [backend]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]

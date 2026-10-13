@@ -5,31 +5,84 @@
   vars:
     backend_port: 8080
     frontend_port: 3000
+    loopcycle_server_name: _
   tasks:
     - name: Install Nginx
       ansible.builtin.package:
         name: nginx
         state: present
+
+    - name: Remove the default Nginx site so the proxy is the default server
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload Nginx
+
     - name: Configure application proxy
       ansible.builtin.copy:
         dest: /etc/nginx/conf.d/loopcycle.conf
+        owner: root
+        group: root
         mode: '0644'
         content: |
           server {
-            listen 80;
-            server_name _;
-            location /api/ { proxy_pass http://127.0.0.1:{{ backend_port }}/api/; }
-            location /actuator/health { proxy_pass http://127.0.0.1:{{ backend_port }}/actuator/health; }
-            location / { proxy_pass http://127.0.0.1:{{ frontend_port }}; }
+            listen 80 default_server;
+            server_name {{ loopcycle_server_name }};
+
+            location /api/ {
+              proxy_pass http://127.0.0.1:{{ backend_port }}/api/;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_read_timeout 60s;
+            }
+
+            location = /actuator/health {
+              proxy_pass http://127.0.0.1:{{ backend_port }}/actuator/health;
+              access_log off;
+            }
+
+            location / {
+              proxy_pass http://127.0.0.1:{{ frontend_port }};
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+            }
           }
-      notify: Reload Nginx
+      notify: Validate and reload Nginx
+
     - name: Enable Nginx
       ansible.builtin.service:
         name: nginx
         state: started
         enabled: true
+
+    - name: Validate Nginx configuration
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+    - name: Apply pending Nginx configuration
+      ansible.builtin.meta: flush_handlers
+
+    - name: Check public frontend through Nginx
+      ansible.builtin.uri:
+        url: http://127.0.0.1/
+        status_code: 200
+        headers:
+          Host: "{{ loopcycle_server_name if loopcycle_server_name != '_' else ansible_host | default(inventory_hostname) }}"
+      register: proxy_health
+      retries: 10
+      delay: 3
+      until: proxy_health.status == 200
+
   handlers:
     - name: Reload Nginx
       ansible.builtin.service:
         name: nginx
         state: reloaded
+    - name: Validate and reload Nginx
+      ansible.builtin.command: nginx -t
+      changed_when: false
+      notify: Reload Nginx

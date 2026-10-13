@@ -11,6 +11,12 @@ spring:
     open-in-view: false
   flyway:
     enabled: true
+app:
+  auth:
+    jwt-secret: ${APP_JWT_SECRET:}
+    admin-email: ${ADMIN_EMAIL:}
+    admin-password: ${ADMIN_PASSWORD:}
+    token-lifetime-seconds: ${APP_TOKEN_LIFETIME_SECONDS:28800}
 management:
   endpoints:
     web:

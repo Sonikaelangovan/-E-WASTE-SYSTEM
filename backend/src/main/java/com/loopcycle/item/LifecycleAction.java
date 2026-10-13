@@ -1,0 +1,12 @@
+package com.loopcycle.item;
+
+public enum LifecycleAction {
+    SCHEDULE_PICKUP,
+    CONFIRM_COLLECTION,
+    SUBMIT_FOR_VERIFICATION,
+    ASSIGN_RECYCLER,
+    VERIFY,
+    START_RECYCLING,
+    COMPLETE_RECYCLING,
+    SAFE_DISPOSAL
+}
