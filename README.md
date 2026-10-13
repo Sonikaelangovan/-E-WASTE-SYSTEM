@@ -112,7 +112,7 @@ The Docker playbook expects a prepared `.env` and source files available to its 
 
 | # | Experiment | Status / demonstration |
 |---|---|---|
-| 1 | Git clone, status, add, commit, push | Blocked: GitHub DNS failed; no clone or push verified. |
+| 1 | Git clone, status, add, commit, push | Remote was empty, so initialized this workspace, created `feature/ewaste-traceability`, committed, and pushed successfully. |
 | 2 | Fetch vs pull | Document the distinction: fetch updates remote-tracking refs; pull fetches and integrates. Not demonstrated. |
 | 3 | Branch and merge | Use a disposable feature branch and controlled conflict. Not run. |
 | 4 | Jenkins Freestyle | Instructions above; Jenkins unavailable/unverified. |
